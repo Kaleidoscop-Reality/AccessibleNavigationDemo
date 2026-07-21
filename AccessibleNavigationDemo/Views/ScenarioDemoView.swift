@@ -1,5 +1,5 @@
 //
-//  ScenarioDemoView..swift
+//  ScenarioDemoView.swift
 //  AccessibleNavigationDemo
 //
 //  Created by Marc Lidon on 13/7/26.
@@ -10,17 +10,8 @@ import SwiftUI
 @MainActor
 struct ScenarioDemoView: View {
 
-//    @State private var engine = ScenarioEngine()
+    @Bindable var engine: ScenarioEngine
 
-    @State private var engine: ScenarioEngine
-
-        init() {
-            _engine = State(
-                initialValue: ScenarioEngine()
-            )
-        }
-    
-    
     var body: some View {
         VStack(spacing: 20) {
             statusHeader
@@ -73,11 +64,20 @@ struct ScenarioDemoView: View {
 
                 Spacer()
 
-                Text(
-                    "\(engine.currentPosition) / \(engine.totalEvents)"
-                )
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                if engine.hasActiveDynamicEvent {
+                    Label(
+                        "Dynamic event",
+                        systemImage: "bolt.fill"
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                } else {
+                    Text(
+                        "\(engine.currentPosition) / \(engine.totalEvents)"
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                }
             }
 
             ProgressView(value: engine.progress)
@@ -104,14 +104,20 @@ struct ScenarioDemoView: View {
 
     @ViewBuilder
     private var activeScenarioView: some View {
-        if let event = engine.currentEvent {
+        if let event = engine.displayedEvent {
             ScrollView {
                 VStack(spacing: 20) {
                     eventCard(event)
 
-                    responseSection(event)
+                    if engine.hasActiveDynamicEvent {
+                        dynamicResponseSection(event)
+                        dynamicControlSection
+                    } else {
+                        walkthroughResponseSection(event)
+                        walkthroughControlSection
+                    }
 
-                    controlSection
+                    emergencyControlSection
                 }
             }
         } else {
@@ -144,6 +150,22 @@ struct ScenarioDemoView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if engine.hasActiveDynamicEvent {
+                Label(
+                    "Dynamic navigation event",
+                    systemImage: "bolt.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else {
+                Label(
+                    "Walkthrough event",
+                    systemImage: "figure.walk"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
             Text(event.title)
                 .font(.largeTitle)
                 .fontWeight(.bold)
@@ -174,14 +196,12 @@ struct ScenarioDemoView: View {
                 "Expected response",
                 value: event.expectedResponse
             )
-            
+
             LabeledContent(
                 "Speech status",
-                value: engine.speechService.isSpeaking
-                    ? "Speaking"
-                    : "Idle"
+                value: speechStatusTitle
             )
-            
+
             LabeledContent(
                 "Haptic support",
                 value: engine.hapticService.supportsHaptics
@@ -190,20 +210,37 @@ struct ScenarioDemoView: View {
             )
 
             LabeledContent(
+                "Haptic engine",
+                value: engine.hapticService.isEngineRunning
+                    ? "Running"
+                    : "Stopped"
+            )
+
+            LabeledContent(
                 "Last pattern",
                 value: engine.hapticService.lastPlayedPattern?.title
                     ?? "None"
             )
+
+            if engine.hasActiveDynamicEvent {
+                LabeledContent(
+                    "Queued events",
+                    value: engine.queuedEventCount.formatted()
+                )
+            }
         }
         .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(
+            maxWidth: .infinity,
+            alignment: .leading
+        )
         .background(.regularMaterial)
         .clipShape(
             RoundedRectangle(cornerRadius: 20)
         )
     }
 
-    private func responseSection(
+    private func walkthroughResponseSection(
         _ event: NavigationEvent
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -211,7 +248,10 @@ struct ScenarioDemoView: View {
                 .font(.headline)
 
             Text(event.userResponse.title)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(
+                    maxWidth: .infinity,
+                    alignment: .leading
+                )
 
             HStack {
                 Button("Acknowledge") {
@@ -225,10 +265,42 @@ struct ScenarioDemoView: View {
                 .buttonStyle(.bordered)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(
+            maxWidth: .infinity,
+            alignment: .leading
+        )
     }
 
-    private var controlSection: some View {
+    private func dynamicResponseSection(
+        _ event: NavigationEvent
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Dynamic Event")
+                .font(.headline)
+
+            Text(
+                "This event temporarily has priority over the walkthrough event."
+            )
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+
+            LabeledContent(
+                "Priority",
+                value: "\(event.priority.code) · \(event.priority.title)"
+            )
+
+            LabeledContent(
+                "Queued events",
+                value: engine.queuedEventCount.formatted()
+            )
+        }
+        .frame(
+            maxWidth: .infinity,
+            alignment: .leading
+        )
+    }
+
+    private var walkthroughControlSection: some View {
         VStack(spacing: 12) {
             HStack {
                 Button {
@@ -239,7 +311,10 @@ struct ScenarioDemoView: View {
                         systemImage: "chevron.left"
                     )
                 }
-                .disabled(!engine.canMovePrevious)
+                .disabled(
+                    !engine.canMovePrevious ||
+                    engine.state.status == .paused
+                )
 
                 Spacer()
 
@@ -253,6 +328,7 @@ struct ScenarioDemoView: View {
                     )
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(engine.state.status == .paused)
             }
 
             HStack {
@@ -267,13 +343,54 @@ struct ScenarioDemoView: View {
                 }
 
                 Spacer()
+            }
+        }
+    }
 
-                Button(
-                    "Emergency Stop",
-                    role: .destructive
-                ) {
-                    engine.emergencyStop()
+    private var dynamicControlSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Dynamic Event Controls")
+                .font(.headline)
+
+            HStack {
+                Button {
+                    engine.repeatActiveDynamicEvent()
+                } label: {
+                    Label(
+                        "Repeat",
+                        systemImage: "repeat"
+                    )
                 }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button {
+                    engine.completeActiveDynamicEvent()
+                } label: {
+                    Label(
+                        "Complete",
+                        systemImage: "checkmark.circle"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .frame(
+            maxWidth: .infinity,
+            alignment: .leading
+        )
+    }
+
+    private var emergencyControlSection: some View {
+        HStack {
+            Spacer()
+
+            Button(
+                "Emergency Stop",
+                role: .destructive
+            ) {
+                engine.emergencyStop()
             }
         }
     }
@@ -313,10 +430,24 @@ struct ScenarioDemoView: View {
             .buttonStyle(.borderedProminent)
         }
     }
+
+    private var speechStatusTitle: String {
+        if engine.speechService.isPaused {
+            return "Paused"
+        }
+
+        if engine.speechService.isSpeaking {
+            return "Speaking"
+        }
+
+        return "Idle"
+    }
 }
 
 #Preview {
     NavigationStack {
-        ScenarioDemoView()
+        ScenarioDemoView(
+            engine: ScenarioEngine()
+        )
     }
 }

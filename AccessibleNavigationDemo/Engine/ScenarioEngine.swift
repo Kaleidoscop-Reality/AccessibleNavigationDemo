@@ -18,13 +18,21 @@ final class ScenarioEngine {
     private(set) var activeProfile: UserPreferenceProfile
     private(set) var deviceCapabilities: DeviceCapabilities
     private(set) var lastFallbackResolution: FallbackResolution?
+    
+    private(set) var activeDynamicEvent: NavigationEvent?
+    private(set) var lastPriorityResolution: PriorityResolution?
 
+    private(set) var lastIncomingEvent: NavigationEvent?
+    
     let logger: EventLogService
     let speechService: SpeechService
     let hapticService: HapticService
 
     let preferenceAdapter: PreferenceAdapter
     let fallbackResolver: FallbackResolver
+    
+    let priorityManager: PriorityManager
+    let eventQueue: NavigationEventQueue
 
     init() {
         let speechService = SpeechService()
@@ -37,7 +45,9 @@ final class ScenarioEngine {
         self.logger = EventLogService()
         self.speechService = speechService
         self.hapticService = hapticService
-
+        self.activeDynamicEvent = nil
+        self.lastPriorityResolution = nil
+        self.lastIncomingEvent = nil
         self.activeProfile = .defaultProfile
 
         self.deviceCapabilities = DeviceCapabilities(
@@ -51,6 +61,10 @@ final class ScenarioEngine {
         self.preferenceAdapter = preferenceAdapter
         self.fallbackResolver = FallbackResolver()
 
+        self.priorityManager = PriorityManager()
+        self.eventQueue = NavigationEventQueue()
+
+              
         preferenceAdapter.apply(
             profile: activeProfile,
             to: speechService,
@@ -86,6 +100,12 @@ final class ScenarioEngine {
         self.preferenceAdapter = preferenceAdapter
         self.fallbackResolver = FallbackResolver()
 
+        self.priorityManager = PriorityManager()
+        self.eventQueue = NavigationEventQueue()
+
+        self.activeDynamicEvent = nil
+        self.lastPriorityResolution = nil
+        
         preferenceAdapter.apply(
             profile: activeProfile,
             to: speechService,
@@ -116,6 +136,12 @@ final class ScenarioEngine {
         self.preferenceAdapter = preferenceAdapter
         self.fallbackResolver = fallbackResolver
 
+        self.priorityManager = PriorityManager()
+        self.eventQueue = NavigationEventQueue()
+
+        self.activeDynamicEvent = nil
+        self.lastPriorityResolution = nil
+        
         preferenceAdapter.apply(
             profile: activeProfile,
             to: speechService,
@@ -129,6 +155,17 @@ final class ScenarioEngine {
         }
 
         return events[state.currentIndex]
+    }
+    
+    var displayedEvent: NavigationEvent? {
+        activeDynamicEvent ?? currentEvent
+    }
+    var hasActiveDynamicEvent: Bool {
+        activeDynamicEvent != nil
+    }
+
+    var queuedEventCount: Int {
+        eventQueue.count
     }
 
     var currentPosition: Int {
@@ -172,7 +209,7 @@ final class ScenarioEngine {
 
         logger.record(
             action: .preferenceProfileChanged,
-            event: currentEvent,
+            event: displayedEvent,
             message: """
             Active preference profile changed to \
             \(profile.name).
@@ -187,7 +224,7 @@ final class ScenarioEngine {
 
         logger.record(
             action: .deviceCapabilitiesUpdated,
-            event: currentEvent,
+            event: displayedEvent,
             message: """
             Device capabilities were updated. \
             Speech: \(capabilities.supportsSpeechOutput), \
@@ -195,6 +232,64 @@ final class ScenarioEngine {
             visual: \(capabilities.supportsVisualOutput).
             """
         )
+    }
+    
+    func receive(
+        _ incomingEvent: NavigationEvent
+    ) {
+        lastIncomingEvent = incomingEvent
+        
+        logger.record(
+            action: .incomingEventReceived,
+            event: incomingEvent,
+            message: """
+            Incoming event \(incomingEvent.title) received with \
+            priority \(incomingEvent.priority.code).
+            """
+        )
+
+        let activeEvent = eventUsedForPriorityResolution()
+
+        let resolution = priorityManager.resolve(
+            incomingEvent: incomingEvent,
+            activeEvent: activeEvent
+        )
+
+        lastPriorityResolution = resolution
+
+        switch resolution.action {
+        case .present:
+            presentDynamicEvent(
+                incomingEvent,
+                wasQueued: false
+            )
+
+        case .interrupt:
+            interruptCurrentOutput(
+                with: incomingEvent,
+                resolution: resolution
+            )
+
+        case .queue:
+            eventQueue.enqueue(incomingEvent)
+
+            logger.record(
+                action: .eventQueued,
+                event: incomingEvent,
+                message: """
+                \(incomingEvent.title) was queued. \
+                Queue size: \(eventQueue.count). \
+                \(resolution.reason)
+                """
+            )
+
+        case .discard:
+            logger.record(
+                action: .eventDiscarded,
+                event: incomingEvent,
+                message: resolution.reason
+            )
+        }
     }
 
     func start() {
@@ -224,7 +319,8 @@ final class ScenarioEngine {
     }
 
     func moveToNextEvent() {
-        guard state.status == .running else {
+        guard state.status == .running,
+              activeDynamicEvent == nil else {
             return
         }
 
@@ -238,6 +334,10 @@ final class ScenarioEngine {
     }
 
     func moveToPreviousEvent() {
+        guard activeDynamicEvent == nil else {
+            return
+        }
+
         guard state.status == .running ||
                 state.status == .paused else {
             return
@@ -272,7 +372,7 @@ final class ScenarioEngine {
 
         logger.record(
             action: .scenarioPaused,
-            event: currentEvent,
+            event: displayedEvent,
             message: "The navigation scenario was paused."
         )
     }
@@ -287,13 +387,14 @@ final class ScenarioEngine {
 
         logger.record(
             action: .scenarioResumed,
-            event: currentEvent,
+            event: displayedEvent,
             message: "The navigation scenario resumed."
         )
     }
 
     func acknowledgeCurrentEvent() {
-        guard state.status == .running,
+        guard activeDynamicEvent == nil,
+              state.status == .running,
               let event = currentEvent else {
             return
         }
@@ -308,7 +409,8 @@ final class ScenarioEngine {
     }
 
     func repeatCurrentEvent() {
-        guard state.status == .running,
+        guard activeDynamicEvent == nil,
+              state.status == .running,
               let event = currentEvent else {
             return
         }
@@ -328,7 +430,8 @@ final class ScenarioEngine {
     }
 
     func completeCurrentEvent() {
-        guard state.status == .running,
+        guard activeDynamicEvent == nil,
+              state.status == .running,
               let event = currentEvent else {
             return
         }
@@ -346,12 +449,21 @@ final class ScenarioEngine {
     }
 
     func emergencyStop() {
-        let event = currentEvent
-
+        let event = displayedEvent
+        lastIncomingEvent = nil
+        
         speechService.stop()
         hapticService.stop()
 
-        updateCurrentResponse(.emergencyStop)
+        if activeDynamicEvent == nil {
+            updateCurrentResponse(.emergencyStop)
+        }
+
+        activeDynamicEvent = nil
+        eventQueue.removeAll()
+        lastPriorityResolution = nil
+        lastFallbackResolution = nil
+
         state.status = .cancelled
 
         logger.record(
@@ -383,17 +495,28 @@ final class ScenarioEngine {
     }
 
     func cancel() {
+        
+        
         guard state.status == .running ||
-                state.status == .paused else {
+                state.status == .paused ||
+                activeDynamicEvent != nil else {
             return
         }
 
-        let event = currentEvent
-
+        let event = displayedEvent
+        lastIncomingEvent = nil
         speechService.stop()
         hapticService.stop()
 
-        updateCurrentResponse(.cancelled)
+        if activeDynamicEvent == nil {
+            updateCurrentResponse(.cancelled)
+        }
+
+        activeDynamicEvent = nil
+        eventQueue.removeAll()
+        lastPriorityResolution = nil
+        lastFallbackResolution = nil
+
         state.status = .cancelled
 
         logger.record(
@@ -420,8 +543,11 @@ final class ScenarioEngine {
             message: "The navigation scenario was cancelled."
         )
     }
-
+    
     func restart() {
+        
+        lastIncomingEvent = nil
+        
         speechService.stop()
         hapticService.stop()
 
@@ -432,7 +558,12 @@ final class ScenarioEngine {
         }
 
         state = .initial
+
+        activeDynamicEvent = nil
+        lastPriorityResolution = nil
         lastFallbackResolution = nil
+
+        eventQueue.removeAll()
 
         logger.clear()
 
@@ -636,5 +767,180 @@ final class ScenarioEngine {
             event: currentEvent,
             message: "All navigation events were processed."
         )
+    }
+    
+    private func eventUsedForPriorityResolution()
+        -> NavigationEvent? {
+
+        if let activeDynamicEvent {
+            return activeDynamicEvent
+        }
+
+        guard state.status == .running ||
+                state.status == .paused else {
+            return nil
+        }
+
+        return currentEvent
+    }
+    
+    private func interruptCurrentOutput(
+        with incomingEvent: NavigationEvent,
+        resolution: PriorityResolution
+    ) {
+        let interruptedEvent =
+            activeDynamicEvent ?? currentEvent
+
+        speechService.stop()
+        hapticService.stop()
+
+        if let interruptedEvent {
+            logger.record(
+                action: .audioCueStopped,
+                event: interruptedEvent,
+                message: """
+                Audio stopped because a higher-priority event \
+                interrupted the active event.
+                """
+            )
+
+            logger.record(
+                action: .hapticCueStopped,
+                event: interruptedEvent,
+                message: """
+                Haptics stopped because a higher-priority event \
+                interrupted the active event.
+                """
+            )
+
+            logger.record(
+                action: .eventInterrupted,
+                event: interruptedEvent,
+                message: """
+                \(interruptedEvent.title) was interrupted by \
+                \(incomingEvent.title). \(resolution.reason)
+                """
+            )
+        }
+
+        if let activeDynamicEvent {
+            eventQueue.enqueue(activeDynamicEvent)
+
+            logger.record(
+                action: .eventQueued,
+                event: activeDynamicEvent,
+                message: """
+                The interrupted dynamic event was returned to \
+                the queue.
+                """
+            )
+        }
+
+        presentDynamicEvent(
+            incomingEvent,
+            wasQueued: false
+        )
+    }
+    
+    private func presentDynamicEvent(
+        _ event: NavigationEvent,
+        wasQueued: Bool
+    ) {
+        activeDynamicEvent = event
+
+        let resolution = resolveDelivery(
+            for: event
+        )
+
+        guard resolution.shouldDeliverEvent else {
+            logger.record(
+                action: .eventFiltered,
+                event: event,
+                message: resolution.reason
+            )
+
+            activeDynamicEvent = nil
+            presentNextQueuedEventOrResume()
+            return
+        }
+
+        logger.record(
+            action: wasQueued
+                ? .queuedEventPresented
+                : .eventPresented,
+            event: event,
+            message: """
+            Dynamic event \(event.title) presented. \
+            Audio: \(resolution.deliverAudio), \
+            haptics: \(resolution.deliverHaptics), \
+            visual: \(resolution.deliverVisual).
+            """
+        )
+
+        recordFallback(
+            resolution,
+            for: event
+        )
+
+        deliver(
+            event,
+            using: resolution,
+            repeated: false
+        )
+    }
+    
+    private func presentNextQueuedEventOrResume() {
+        if let nextEvent = eventQueue.dequeue() {
+            presentDynamicEvent(
+                nextEvent,
+                wasQueued: true
+            )
+
+            return
+        }
+
+        guard state.status == .running,
+              currentEvent != nil else {
+            return
+        }
+
+        presentCurrentEvent()
+    }
+    
+    func repeatActiveDynamicEvent() {
+        guard let event = activeDynamicEvent else {
+            return
+        }
+
+        logger.record(
+            action: .eventRepeated,
+            event: event,
+            message: """
+            The dynamic event \(event.title) was repeated.
+            """
+        )
+
+        deliver(event)
+    }
+    
+    func completeActiveDynamicEvent() {
+        guard let event = activeDynamicEvent else {
+            return
+        }
+
+        speechService.stop()
+        hapticService.stop()
+
+        activeDynamicEvent = nil
+
+        logger.record(
+            action: .eventCompleted,
+            event: event,
+            message: """
+            Dynamic event \(event.title) was completed.
+            """
+        )
+
+        presentNextQueuedEventOrResume()
     }
 }

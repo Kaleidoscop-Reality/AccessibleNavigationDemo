@@ -11,19 +11,25 @@ import Observation
 
 @MainActor
 @Observable
-final class SpeechService {
+final class SpeechService: NSObject {
 
     private let synthesizer = AVSpeechSynthesizer()
 
     private(set) var isSpeaking = false
+    private(set) var isPaused = false
     private(set) var lastSpokenText: String?
+    private(set) var lastErrorMessage: String?
 
     var languageCode = "en-US"
     var rate: Float = 0.48
     var pitchMultiplier: Float = 1.0
     var volume: Float = 1.0
 
-    init() {
+    override init() {
+        super.init()
+
+        synthesizer.delegate = self
+
         configureAudioSession()
     }
 
@@ -40,7 +46,7 @@ final class SpeechService {
         }
 
         if interruptCurrentSpeech,
-           synthesizer.isSpeaking {
+           synthesizer.isSpeaking || synthesizer.isPaused {
             synthesizer.stopSpeaking(at: .immediate)
         }
 
@@ -52,12 +58,15 @@ final class SpeechService {
             language: languageCode
         )
 
-        utterance.rate = rate
-        utterance.pitchMultiplier = pitchMultiplier
-        utterance.volume = volume
+        utterance.rate = clampedRate(rate)
+        utterance.pitchMultiplier = clampedPitch(
+            pitchMultiplier
+        )
+        utterance.volume = clampedVolume(volume)
 
         lastSpokenText = cleanText
-        isSpeaking = true
+        lastErrorMessage = nil
+        isPaused = false
 
         synthesizer.speak(utterance)
     }
@@ -67,17 +76,24 @@ final class SpeechService {
             return
         }
 
-        speak(lastSpokenText)
+        speak(
+            lastSpokenText,
+            interruptCurrentSpeech: true
+        )
     }
 
     func stop() {
-        guard synthesizer.isSpeaking else {
+        guard synthesizer.isSpeaking ||
+                synthesizer.isPaused else {
             isSpeaking = false
+            isPaused = false
             return
         }
 
         synthesizer.stopSpeaking(at: .immediate)
+
         isSpeaking = false
+        isPaused = false
     }
 
     func pause() {
@@ -85,15 +101,26 @@ final class SpeechService {
             return
         }
 
-        synthesizer.pauseSpeaking(at: .word)
-        isSpeaking = false
+        let paused = synthesizer.pauseSpeaking(
+            at: .word
+        )
+
+        if paused {
+            isSpeaking = false
+            isPaused = true
+        }
     }
 
     func resume() {
+        guard synthesizer.isPaused else {
+            return
+        }
+
         let resumed = synthesizer.continueSpeaking()
 
         if resumed {
             isSpeaking = true
+            isPaused = false
         }
     }
 
@@ -108,10 +135,82 @@ final class SpeechService {
             )
 
             try session.setActive(true)
+
+            lastErrorMessage = nil
         } catch {
-            print(
-                "Audio session configuration failed: \(error)"
-            )
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func clampedRate(
+        _ value: Float
+    ) -> Float {
+        min(max(value, 0.1), 0.6)
+    }
+
+    private func clampedPitch(
+        _ value: Float
+    ) -> Float {
+        min(max(value, 0.5), 2.0)
+    }
+
+    private func clampedVolume(
+        _ value: Float
+    ) -> Float {
+        min(max(value, 0), 1)
+    }
+}
+
+extension SpeechService: AVSpeechSynthesizerDelegate {
+
+    nonisolated func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        didStart utterance: AVSpeechUtterance
+    ) {
+        Task { @MainActor [weak self] in
+            self?.isSpeaking = true
+            self?.isPaused = false
+        }
+    }
+
+    nonisolated func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        didFinish utterance: AVSpeechUtterance
+    ) {
+        Task { @MainActor [weak self] in
+            self?.isSpeaking = false
+            self?.isPaused = false
+        }
+    }
+
+    nonisolated func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        didCancel utterance: AVSpeechUtterance
+    ) {
+        Task { @MainActor [weak self] in
+            self?.isSpeaking = false
+            self?.isPaused = false
+        }
+    }
+
+    nonisolated func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        didPause utterance: AVSpeechUtterance
+    ) {
+        Task { @MainActor [weak self] in
+            self?.isSpeaking = false
+            self?.isPaused = true
+        }
+    }
+
+    nonisolated func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        didContinue utterance: AVSpeechUtterance
+    ) {
+        Task { @MainActor [weak self] in
+            self?.isSpeaking = true
+            self?.isPaused = false
         }
     }
 }
+

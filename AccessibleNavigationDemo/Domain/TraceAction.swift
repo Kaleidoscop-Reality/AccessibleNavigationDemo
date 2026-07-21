@@ -36,6 +36,12 @@ enum TraceAction: String, Codable, CaseIterable, Identifiable {
     case eventFiltered
     case fallbackApplied
     case unsafeDeliveryDetected
+    
+    case incomingEventReceived
+    case eventInterrupted
+    case eventQueued
+    case queuedEventPresented
+    case eventDiscarded
 
     var id: String {
         rawValue
@@ -95,6 +101,17 @@ enum TraceAction: String, Codable, CaseIterable, Identifiable {
                 "Fallback Applied"
             case .unsafeDeliveryDetected:
                 "Unsafe Delivery Detected"
+            
+            case .incomingEventReceived:
+                "Incoming Event Received"
+            case .eventInterrupted:
+                "Event Interrupted"
+            case .eventQueued:
+                "Event Queued"
+            case .queuedEventPresented:
+                "Queued Event Presented"
+            case .eventDiscarded:
+                "Event Discarded"
         }
     }
 }

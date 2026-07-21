@@ -9,9 +9,11 @@ import SwiftUI
 
 @main
 struct AccessibleNavigationDemoApp: App {
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+//            HomeView()
         }
     }
 }
