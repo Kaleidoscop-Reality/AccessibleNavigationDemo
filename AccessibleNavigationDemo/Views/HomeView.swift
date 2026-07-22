@@ -104,13 +104,13 @@ private var experienceSection: some View {
         .buttonStyle(.plain)
 
         NavigationLink {
-            LiveMRDemoPlaceholderView()
+            LiveMRDemoView()
         } label: {
             experienceCard(
                 title: "Live MR Demo",
                 description: """
-                Future camera and RealityKit experience using \
-                proximity-based navigation events.
+                Place virtual navigation objects in the real environment \
+                and test proximity-based accessible feedback.
                 """,
                 systemImage: "camera.viewfinder",
                 status: "Planned"
