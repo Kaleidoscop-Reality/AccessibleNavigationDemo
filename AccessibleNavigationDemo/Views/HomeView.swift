@@ -12,6 +12,7 @@ struct HomeView: View {
 
 @State private var walkthroughEngine: ScenarioEngine
 @State private var simulatorEngine: ScenarioEngine
+@State private var liveMREngine: ScenarioEngine
 
 init() {
     _walkthroughEngine = State(
@@ -19,6 +20,10 @@ init() {
     )
 
     _simulatorEngine = State(
+        initialValue: ScenarioEngine()
+    )
+
+    _liveMREngine = State(
         initialValue: ScenarioEngine()
     )
 }
@@ -104,7 +109,9 @@ private var experienceSection: some View {
         .buttonStyle(.plain)
 
         NavigationLink {
-            LiveMRDemoView()
+            LiveMRDemoView(
+                engine: liveMREngine
+            )
         } label: {
             experienceCard(
                 title: "Live MR Demo",
@@ -113,7 +120,7 @@ private var experienceSection: some View {
                 and test proximity-based accessible feedback.
                 """,
                 systemImage: "camera.viewfinder",
-                status: "Planned"
+                status: "Functional"
             )
         }
         .buttonStyle(.plain)
@@ -140,6 +147,11 @@ private var systemStatusSection: some View {
         LabeledContent(
             "Simulator queue",
             value: simulatorEngine.queuedEventCount.formatted()
+        )
+
+        LabeledContent(
+            "Live MR log entries",
+            value: liveMREngine.logger.entryCount.formatted()
         )
 
         LabeledContent(

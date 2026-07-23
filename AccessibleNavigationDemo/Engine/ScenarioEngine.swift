@@ -105,6 +105,7 @@ final class ScenarioEngine {
 
         self.activeDynamicEvent = nil
         self.lastPriorityResolution = nil
+        self.lastIncomingEvent = nil
         
         preferenceAdapter.apply(
             profile: activeProfile,
@@ -141,6 +142,7 @@ final class ScenarioEngine {
 
         self.activeDynamicEvent = nil
         self.lastPriorityResolution = nil
+        self.lastIncomingEvent = nil
         
         preferenceAdapter.apply(
             profile: activeProfile,
@@ -943,4 +945,44 @@ final class ScenarioEngine {
 
         presentNextQueuedEventOrResume()
     }
+    func recordLiveMREvent(
+        _ event: NavigationEvent
+    ) {
+        lastIncomingEvent = event
+
+        logger.record(
+            action: .incomingEventReceived,
+            event: event,
+            message: """
+            Live MR proximity event received. \
+            Object: \(event.title). \
+            Distance: \(event.distanceMeters?.formatted(.number.precision(.fractionLength(1))) ?? "Unavailable") metres.
+            """
+        )
+
+        logger.record(
+            action: .eventPresented,
+            event: event,
+            message: """
+            Live MR accessible feedback delivered. \
+            Visual: true, audio: true, haptics: true.
+            """
+        )
+
+        logger.record(
+            action: .audioCueDelivered,
+            event: event,
+            message: "Spoken instruction delivered: \(event.instruction)"
+        )
+
+        logger.record(
+            action: .hapticCueDelivered,
+            event: event,
+            message: """
+            Haptic cue delivered using \
+            \(event.hapticCueFamily.rawValue).
+            """
+        )
+    }
+
 }
