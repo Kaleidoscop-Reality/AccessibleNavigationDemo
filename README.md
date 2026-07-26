@@ -408,24 +408,3 @@ accessibility:reliability
 ```
 
 These fields are experimental project concepts and are not presented as an official OpenUSD accessibility schema.
-
-## Project Status
-
-AccessibleNavigationDemo is under active development.
-
-The current implementation is suitable for:
-
-* technical demonstrations;
-* architecture validation;
-* accessibility model experimentation;
-* standards discussions;
-* prototype testing;
-* future OpenUSD accessibility research.
-
-It is not intended for production navigation, medical use, emergency response, or safety-critical deployment.
-
-## License
-
-No license has been selected yet.
-
-Until a license is added, all rights remain reserved by the repository owner.
