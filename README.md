@@ -1,4 +1,4 @@
-# AccessibleNavigationDemo
+# Accessible Navigation Demo
 
 
 <p align="left">
